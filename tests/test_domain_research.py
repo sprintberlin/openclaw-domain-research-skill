@@ -36,8 +36,9 @@ class TestNormalizeDomain(unittest.TestCase):
 
     def test_normalize_tld(self):
         self.assertEqual(dr.normalize_tld(".COM"), "com")
+        self.assertEqual(dr.normalize_tld("co.uk"), "co.uk")
         with self.assertRaises(dr.DomainResearchError):
-            dr.normalize_tld("co.uk")
+            dr.normalize_tld("-bad")
 
 
 class TestParsers(unittest.TestCase):
@@ -131,6 +132,22 @@ class TestErrors(unittest.TestCase):
     def test_invalid_xml(self):
         with self.assertRaises(dr.NamecheapError):
             dr.parse_namecheap_response("<not-xml")
+
+
+class TestExpandBareNames(unittest.TestCase):
+    def test_expand_bare_name(self):
+        domains = dr.expand_bare_names(["mybrand"], ["com", "de", "ai"])
+        self.assertEqual(domains, ["mybrand.com", "mybrand.de", "mybrand.ai"])
+
+    def test_normalize_bare_names(self):
+        names = dr.normalize_bare_names(["MyBrand", "other-brand"])
+        self.assertEqual(names, ["mybrand", "other-brand"])
+        with self.assertRaises(dr.DomainResearchError):
+            dr.normalize_bare_name("bad.com")
+
+    def test_parse_tld_list(self):
+        tlds = dr.parse_tld_list("com, .de, AI, com")
+        self.assertEqual(tlds, ["com", "de", "ai"])
 
 
 class TestCli(unittest.TestCase):

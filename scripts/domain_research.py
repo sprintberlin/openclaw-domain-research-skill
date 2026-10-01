@@ -80,6 +80,22 @@ class NamecheapClient:
 
         return parse_namecheap_response(body)
 
+    def tlds(self, registerable_only: bool = True) -> list[dict[str, Any]]:
+        root = self.call("namecheap.domains.getTldList")
+        rows = [
+            element.attrib
+            for element in root.iter()
+            if local_name(element.tag) == "Tld"
+        ]
+        if registerable_only:
+            rows = [
+                row
+                for row in rows
+                if row.get("IsApiRegisterable", "").lower() == "true"
+            ]
+        rows.sort(key=lambda row: row.get("Name", "").lower())
+        return rows
+
     def check(self, domains: list[str]) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
         for start in range(0, len(domains), MAX_DOMAINS_PER_CHECK):
@@ -270,6 +286,99 @@ def normalize_domain(value: str) -> str:
     return ascii_domain
 
 
+def parse_tld_list(value: str) -> list[str]:
+    tlds: list[str] = []
+    seen: set[str] = set()
+    for candidate in value.split(","):
+        if not candidate.strip():
+            continue
+        tld = normalize_tld(candidate)
+        if tld not in seen:
+            tlds.append(tld)
+            seen.add(tld)
+    if not tlds:
+        raise DomainResearchError("At least one TLD is required")
+    return tlds
+
+
+def normalize_bare_name(value: str) -> str:
+    name = value.strip().lower().rstrip(".")
+    if not name or "." in name:
+        raise DomainResearchError(
+            f"Expected a name without TLD, got: {value}. Use 'check' for full domains."
+        )
+    try:
+        name = name.encode("idna").decode("ascii")
+    except UnicodeError:
+        raise DomainResearchError(f"Invalid internationalized name: {value}") from None
+    if (
+        len(name) > 63
+        or not DOMAIN_RE.fullmatch(name)
+        or name.startswith("-")
+        or name.endswith("-")
+    ):
+        raise DomainResearchError(f"Invalid name: {value}")
+    return name
+
+
+def normalize_bare_names(values: Iterable[str]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for candidate in value.split(","):
+            name = normalize_bare_name(candidate)
+            if name not in seen:
+                names.append(name)
+                seen.add(name)
+    if not names:
+        raise DomainResearchError("At least one name is required")
+    return names
+
+
+def expand_bare_names(names: Iterable[str], tlds: Iterable[str]) -> list[str]:
+    """Expand normalized bare names into full domains for every supplied TLD."""
+    return [f"{name}.{tld}" for name in names for tld in tlds]
+
+
+def search_bare_names(
+    client: NamecheapClient,
+    names: list[str],
+    requested_tlds: list[str] | None = None,
+    include_unavailable: bool = False,
+) -> dict[str, Any]:
+    """Check bare names against explicit or live Namecheap-registerable TLDs."""
+    if requested_tlds is None:
+        tlds = [
+            normalize_tld(row["Name"])
+            for row in client.tlds(registerable_only=True)
+            if row.get("Name")
+        ]
+        tld_source = "namecheap.domains.getTldList"
+    else:
+        tlds = requested_tlds
+        tld_source = "explicit"
+
+    domains = expand_bare_names(names, tlds)
+    rows = client.check(domains)
+    available_count = sum(row.get("available") is True for row in rows)
+    unavailable_count = sum(row.get("available") is False for row in rows)
+    unknown_count = len(rows) - available_count - unavailable_count
+    visible_rows = rows if include_unavailable else [
+        row for row in rows if row.get("available") is True
+    ]
+    return {
+        "names": names,
+        "tld_source": tld_source,
+        "tld_count": len(tlds),
+        "checked": len(rows),
+        "available_count": available_count,
+        "unavailable_count": unavailable_count,
+        "unknown_count": unknown_count,
+        "showing": "all" if include_unavailable else "available",
+        "results": visible_rows,
+    }
+
+
 def normalize_domains(values: Iterable[str]) -> list[str]:
     domains: list[str] = []
     seen: set[str] = set()
@@ -285,13 +394,22 @@ def normalize_domains(values: Iterable[str]) -> list[str]:
 
 
 def normalize_tld(value: str) -> str:
-    tld = value.strip().lower().lstrip(".")
+    tld = value.strip().lower().lstrip(".").rstrip(".")
     try:
         tld = tld.encode("idna").decode("ascii")
     except UnicodeError:
         raise DomainResearchError(f"Invalid TLD: {value}") from None
-    if not tld or "." in tld or not DOMAIN_RE.fullmatch(tld):
+    if not tld:
         raise DomainResearchError(f"Invalid TLD: {value}")
+    for label in tld.split("."):
+        if (
+            not label
+            or len(label) > 63
+            or not DOMAIN_RE.fullmatch(label)
+            or label.startswith("-")
+            or label.endswith("-")
+        ):
+            raise DomainResearchError(f"Invalid TLD: {value}")
     return tld
 
 
@@ -512,6 +630,34 @@ def research_domains(
     return output
 
 
+def print_tlds_table(rows: list[dict[str, Any]]) -> None:
+    print(f"{'TLD':<12} {'TYPE':<8} {'MIN-YRS':<8} {'MAX-YRS':<8} {'IDN':<5} TLD_STATE")
+    for row in rows:
+        print(
+            f".{row.get('Name', ''):<11} {row.get('Type', ''):<8} "
+            f"{row.get('MinRegisterYears', '') or '-':<8} "
+            f"{row.get('MaxRegisterYears', '') or '-':<8} "
+            f"{('yes' if row.get('IsSupportsIDN', '').lower() == 'true' else 'no'):<5} "
+            f"{row.get('TldState', '') or '-'}"
+        )
+    print(f"\nTotal: {len(rows)} TLDs")
+
+
+def print_search_result(result: dict[str, Any]) -> None:
+    print(
+        f"Checked {result['checked']} domains across {result['tld_count']} TLDs: "
+        f"{result['available_count']} available, "
+        f"{result['unavailable_count']} unavailable, "
+        f"{result['unknown_count']} unknown."
+    )
+    rows = result["results"]
+    if not rows:
+        print("No matching domains to display.")
+        return
+    print()
+    print_check_table(rows)
+
+
 def print_check_table(rows: list[dict[str, Any]]) -> None:
     print(f"{'DOMAIN':<45} {'AVAILABLE':<10} {'PREMIUM':<8} PRICE")
     for row in rows:
@@ -603,10 +749,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    check = subparsers.add_parser("check", help="Check one or more domains at Namecheap")
-    check.add_argument("domains", nargs="+", help="Domains, space- or comma-separated")
+    check = subparsers.add_parser("check", help="Check one or more full domains at Namecheap")
+    check.add_argument("domains", nargs="+", help="Full domains, space- or comma-separated")
     check.add_argument("--json", action="store_true")
     add_namecheap_options(check)
+
+    tlds = subparsers.add_parser(
+        "tlds", help="List TLDs supported by the Namecheap API"
+    )
+    tlds.add_argument(
+        "--all", action="store_true", help="Include TLDs not registerable via API"
+    )
+    tlds.add_argument(
+        "--filter", help="Only show TLDs containing this substring"
+    )
+    tlds.add_argument("--json", action="store_true")
+    add_namecheap_options(tlds)
+
+    search = subparsers.add_parser(
+        "search",
+        help="Search bare names across all live Namecheap-registerable TLDs",
+    )
+    search.add_argument(
+        "names", nargs="+", help="Names without a TLD, space- or comma-separated"
+    )
+    search.add_argument(
+        "--tlds",
+        help="Limit the search to a comma-separated TLD list instead of all registerable TLDs",
+    )
+    search.add_argument(
+        "--include-unavailable",
+        action="store_true",
+        help="Show unavailable and unknown domains too",
+    )
+    search.add_argument("--json", action="store_true")
+    add_namecheap_options(search)
 
     price = subparsers.add_parser("price", help="Get Namecheap TLD pricing")
     price.add_argument("tld", help="TLD, with or without a leading dot")
@@ -638,7 +815,7 @@ def build_parser() -> argparse.ArgumentParser:
     research = subparsers.add_parser(
         "research", help="Combine availability, pricing, RDAP, and DNS"
     )
-    research.add_argument("domains", nargs="+", help="Domains, space- or comma-separated")
+    research.add_argument("domains", nargs="+", help="Full domains, space- or comma-separated")
     research.add_argument("--json", action="store_true")
     research.add_argument("--no-pricing", action="store_true")
     research.add_argument("--no-rdap", action="store_true")
@@ -664,6 +841,22 @@ def main(argv: list[str] | None = None) -> int:
             domains = normalize_domains(args.domains)
             rows = build_namecheap_client(args).check(domains)
             emit(rows, args.json, print_check_table)
+        elif args.command == "tlds":
+            rows = build_namecheap_client(args).tlds(registerable_only=not args.all)
+            if args.filter:
+                needle = args.filter.lower().lstrip(".")
+                rows = [row for row in rows if needle in row.get("Name", "").lower()]
+            emit(rows, args.json, print_tlds_table)
+        elif args.command == "search":
+            names = normalize_bare_names(args.names)
+            requested_tlds = parse_tld_list(args.tlds) if args.tlds else None
+            result = search_bare_names(
+                build_namecheap_client(args),
+                names,
+                requested_tlds=requested_tlds,
+                include_unavailable=args.include_unavailable,
+            )
+            emit(result, args.json, print_search_result)
         elif args.command == "price":
             if args.years < 1 or args.years > 10:
                 raise DomainResearchError("--years must be between 1 and 10")

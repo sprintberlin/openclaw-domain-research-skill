@@ -12,6 +12,8 @@ Source: [sprintberlin/openclaw-domain-research-skill](https://github.com/sprintb
 ## Capabilities
 
 - Batch domain availability checks via Namecheap (`namecheap.domains.check`)
+- Bare-name search across all live Namecheap-registerable TLDs (`search`)
+- Live TLD catalog with metadata (`tlds`)
 - TLD registration and renewal pricing via Namecheap (`namecheap.users.getPricing`)
 - Public RDAP queries for registrar, creation, update, and expiration dates (`https://rdap.org`)
 - Public DNS record lookups via DNS over HTTPS (A, AAAA, MX, NS, TXT)
@@ -57,7 +59,7 @@ All commands support `--json` for machine consumption.
 Runs availability, registration price, renewal price, RDAP, and DNS in one go:
 
 ```bash
-python3 scripts/domain_research.py research mybrand123.com anotherbrand.ai
+python3 scripts/domain_research.py research mybrand123.com
 ```
 
 JSON output:
@@ -72,15 +74,43 @@ Skip specific sections when only partial data is needed:
 python3 scripts/domain_research.py research mybrand123.com --no-dns --no-rdap
 ```
 
-### 2. Availability check
+### 2. Bare-name search
 
-Batch-check up to 50 domains per API request:
+Check a name without TLD against all live registerable Namecheap TLDs (or a custom `--tlds` list):
 
 ```bash
-python3 scripts/domain_research.py check example.com brandnewidea99.com awesome-startup.net
+# Check a bare name across all live registerable TLDs
+python3 scripts/domain_research.py search startupidea
+
+# Limit TLDs explicitly
+python3 scripts/domain_research.py search startupidea --tlds com,de,ai,io
+
+# Show unavailable domains too
+python3 scripts/domain_research.py search startupidea --include-unavailable
 ```
 
-### 3. TLD pricing
+Full-domain checks (no TLD expansion) use `check`:
+
+```bash
+python3 scripts/domain_research.py check example.com brandnewidea99.com
+```
+
+### 3. List supported TLDs
+
+Query all TLDs supported by Namecheap via the API:
+
+```bash
+# All registerable TLDs
+python3 scripts/domain_research.py tlds
+
+# Filter by keyword
+python3 scripts/domain_research.py tlds --filter cloud
+
+# JSON output
+python3 scripts/domain_research.py tlds --json
+```
+
+### 4. TLD pricing
 
 Inspect base price, ICANN fees, renewal, and transfer rates:
 

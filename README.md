@@ -7,6 +7,8 @@ Repository: [`sprintberlin/openclaw-domain-research-skill`](https://github.com/s
 ## Features
 
 - Check one or many domains for availability through the Namecheap API
+- Search bare names without a TLD (`search mybrand`) across live Namecheap TLDs
+- Query all supported TLDs and their metadata directly from the Namecheap API (`tlds`)
 - Detect premium domains and expose premium registration and renewal quotes
 - Query live registration, renewal, transfer, and reactivation prices by TLD
 - Inspect registrar, lifecycle dates, status codes, and nameservers through RDAP
@@ -68,6 +70,12 @@ cd ~/github_repos/openclaw-domain-research-skill
 # Availability
 python3 scripts/domain_research.py check example.com brand-idea-12345.com
 
+# Search a bare name across live Namecheap-registerable TLDs
+python3 scripts/domain_research.py search brand-idea-12345 --tlds com,de,ai,io,net,cloud
+
+# List supported TLDs from Namecheap
+python3 scripts/domain_research.py tlds --filter cloud
+
 # Standard TLD price
 python3 scripts/domain_research.py price com
 python3 scripts/domain_research.py price com --action renew
@@ -93,6 +101,23 @@ python3 scripts/domain_research.py check DOMAIN [DOMAIN ...] [--json]
 ```
 
 Comma-separated values are also accepted. The helper removes duplicates and splits large inputs into batches of 50 for the Namecheap API.
+
+### `tlds`
+
+```bash
+python3 scripts/domain_research.py tlds [--filter KEYWORD] [--all] [--json]
+```
+
+Calls `namecheap.domains.getTldList` to return live TLD metadata from Namecheap. By default it only shows TLDs registerable via API.
+
+### `search`
+
+```bash
+python3 scripts/domain_research.py search NAME [NAME ...] \
+  [--tlds com,de,ai,io] [--include-unavailable] [--json]
+```
+
+Accepts names without a TLD and checks them against all live registerable Namecheap TLDs (or an explicit `--tlds` list). By default it outputs only the available domains.
 
 ### `price`
 
