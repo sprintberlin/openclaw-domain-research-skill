@@ -163,7 +163,7 @@ class NamecheapClient:
                     continue
                 attrs = element.attrib
                 duration = int(attrs.get("Duration", "0") or 0)
-                if duration != years or attrs.get("DurationType", "").upper() != "YEAR":
+                if duration < years or attrs.get("DurationType", "").upper() != "YEAR":
                     continue
                 base_price = decimal_or_none(attrs.get("Price"))
                 additional_cost = decimal_or_none(attrs.get("AdditionalCost"))
@@ -182,9 +182,18 @@ class NamecheapClient:
                 )
         if not matched_product or not prices:
             raise NamecheapError(
-                f"No {years}-year {action.lower()} price returned for .{tld}"
+                f"No {action.lower()} price of {years} year(s) or longer returned for .{tld}"
             )
-        return {"tld": tld, "action": action.lower(), **prices[0]}
+        # Some TLDs (e.g. .ai) have a minimum term above 1 year; fall back to the
+        # shortest available term and flag it instead of failing.
+        best = min(prices, key=lambda row: row["years"])
+        return {
+            "tld": tld,
+            "action": action.lower(),
+            "requested_years": years,
+            "minimum_term": best["years"] != years,
+            **best,
+        }
 
 
 def local_name(tag: str) -> str:
@@ -673,9 +682,12 @@ def print_price(row: dict[str, Any]) -> None:
     currency = row.get("currency") or ""
     print(f"TLD: .{row['tld']}")
     print(f"Action: {row['action']}")
-    print(f"Duration: {row['years']} year(s)")
+    duration = f"{row['years']} year(s)"
+    if row.get("minimum_term"):
+        duration += f" (minimum term; {row.get('requested_years')} year(s) not offered)"
+    print(f"Duration: {duration}")
     print(f"Price: {row.get('price')} {currency}")
-    print(f"Additional cost: {row.get('additional_cost')} {currency}")
+    print(f"Additional cost: {row.get('additional_cost') or 0} {currency}")
     print(f"Total: {row.get('total')} {currency}")
 
 
