@@ -1,0 +1,11 @@
+{
+  "name": "domain-research",
+  "version": "1.0.0",
+  "description": "Read-only domain research for OpenClaw agents: Namecheap availability and pricing, public RDAP registration data, and DNS-over-HTTPS records with one helper CLI.",
+  "author": "SprintCX",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sprintberlin/openclaw-domain-research-skill"
+  }
+}
